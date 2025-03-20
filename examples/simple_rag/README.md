@@ -26,6 +26,9 @@ This is a simple example RAG application to showcase how one can configure and u
 
 ## Quickstart: RAG with Milvus
 
+### Installation and Setup
+If you have not already done so, follow the instructions in the [Install Guide](../../docs/source/intro/install.md) to create the development environment and install AgentIQ, and follow the [Obtaining API Keys](../../docs/source/intro/get-started.md#obtaining-api-keys) instructions to obtain an NVIDIA API key.
+
 1) Start the docker compose [Skip this step if you already have Milvus running]
     ```bash
     docker compose -f examples/simple_rag/deploy/docker-compose.yaml up -d
@@ -37,6 +40,7 @@ This is a simple example RAG application to showcase how one can configure and u
     export NVIDIA_API_KEY=<YOUR API KEY HERE>
     ```
 
+    Verify whether `lxml` is installed in your current environment. If it’s not installed, simply install it using `pip install lxml`. Next, execute the `bootstrap_milvus.sh` script as illustrated below.
     ```bash
     source .venv/bin/activate
     examples/simple_rag/ingestion/bootstrap_milvus.sh
