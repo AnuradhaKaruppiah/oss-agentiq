@@ -31,7 +31,7 @@ general:
         endpoint: http://localhost:6006/v1/traces
         project: simple_calculator
 
-    
+  front_end:
     _type: fastapi
     endpoints:
       - path: /get_time
