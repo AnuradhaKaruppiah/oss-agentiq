@@ -31,7 +31,7 @@ general:
         endpoint: http://localhost:6006/v1/traces
         project: simple_calculator
 
-  front_end:
+    
     _type: fastapi
     endpoints:
       - path: /get_time
@@ -40,6 +40,9 @@ general:
         function_name: current_datetime
     cors:
       allow_origins: ['*']
+    step_adaptor:
+      mode: custom
+      custom_event_types: [CUSTOM_START, CUSTOM_END, LLM_START, LLM_END, TOOL_START, TOOL_END, FUNCTION_START, FUNCTION_END]
 
 functions:
   calculator_multiply:
