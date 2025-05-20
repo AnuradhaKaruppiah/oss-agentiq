@@ -30,6 +30,8 @@ if typing.TYPE_CHECKING:
     from aiq.builder.context import AIQContextState
 
 logger = logging.getLogger(__name__)
+# enable debug logging for this file
+logger.setLevel(logging.DEBUG)
 
 
 @dataclasses.dataclass
