@@ -14,11 +14,20 @@
 # limitations under the License.
 
 import logging
+import typing
+import uuid
+
+from pydantic import Field
 
 from aiq.builder.builder import Builder
+from aiq.builder.context import AIQContext
 from aiq.builder.function_info import FunctionInfo
+from aiq.builder.intermediate_step_manager import IntermediateStepManager
 from aiq.cli.register_workflow import register_function
 from aiq.data_models.function import FunctionBaseConfig
+from aiq.data_models.intermediate_step import IntermediateStepPayload
+from aiq.data_models.intermediate_step import IntermediateStepType
+from aiq.data_models.intermediate_step import StreamEventData
 
 logger = logging.getLogger(__name__)
 
@@ -137,3 +146,108 @@ async def calculator_subtract(config: SubtractToolConfig, builder: Builder):
         _calculator_subtract,
         description=("This is a mathematical tool used to subtract one number from another. "
                      "It takes 2 numbers as an input and computes their numeric difference as the output."))
+
+
+class SimpleCalculatorConfig(FunctionBaseConfig, name="simple_calculator"):
+    pass
+
+
+class CustomIntermediateStepPayload(IntermediateStepPayload):
+    UUID: str = Field("", description="UUID")
+    name: str = Field("", description="Tool name")
+    data: StreamEventData = Field("", description="Data")
+    event_type: IntermediateStepType = IntermediateStepType.CUSTOM_START
+
+
+class CustomIntermediateStepPayloadEnd(IntermediateStepPayload):
+    UUID: str = Field("", description="UUID")
+    name: str = Field("", description="Tool name")
+    data: StreamEventData = Field("", description="Data")
+    event_type: IntermediateStepType = IntermediateStepType.CUSTOM_END
+
+
+def custom_start_tool(step_manager: IntermediateStepManager,
+                      name: str,
+                      input_data: typing.Any | None = None,
+                      output_data: typing.Any | None = None):
+    uid = str(uuid.uuid4())
+    start_step = CustomIntermediateStepPayload(UUID=uid,
+                                               name=name,
+                                               data=StreamEventData(input=input_data, output=output_data),
+                                               event_type=IntermediateStepType.CUSTOM_START)
+    step_manager.push_intermediate_step(start_step)
+
+    return uid
+
+
+def custom_end_tool(step_manager: IntermediateStepManager,
+                    uid: str,
+                    name: str,
+                    input_data: typing.Any | None = None,
+                    output_data: typing.Any | None = None):
+
+    end_step = CustomIntermediateStepPayloadEnd(UUID=uid,
+                                                name=name,
+                                                data=StreamEventData(input=input_data, output=output_data),
+                                                event_type=IntermediateStepType.CUSTOM_END)
+    step_manager.push_intermediate_step(end_step)
+
+
+@register_function(config_type=SimpleCalculatorConfig)
+async def simple_calculator(config: SimpleCalculatorConfig, builder: Builder):
+    import re
+
+    # Get all calculator tools
+    multiply_tool = builder.get_function(name="calculator_multiply")
+    divide_tool = builder.get_function(name="calculator_divide")
+    subtract_tool = builder.get_function(name="calculator_subtract")
+    inequality_tool = builder.get_function(name="calculator_inequality")
+
+    # Get datetime tool
+    datetime_tool = builder.get_function(name="current_datetime")
+
+    enable_custom_steps = True
+    # Get step manager
+    if enable_custom_steps:
+        step_manager = AIQContext.get().intermediate_step_manager
+    else:
+        step_manager = None
+
+    async def _simple_calculator(input_message: str) -> str:
+        # Use custom steps if step_manager is available
+        if step_manager is not None:
+            uid = custom_start_tool(step_manager=step_manager, name="datetime", input_data=input_message)
+
+        # First get current datetime with custom tools
+        current_time = await datetime_tool.ainvoke(input_message)
+
+        if step_manager is not None:
+            custom_end_tool(step_manager=step_manager, uid=uid, name="datetime", output_data=current_time)
+
+        response = f"Current time: {current_time}\n\n"
+
+        # Extract numbers from input
+        numbers = re.findall(r"\d+", input_message)
+        if len(numbers) < 2:
+            return f"{response}Error: Please provide at least 2 numbers for calculation."
+
+        # Call all calculator tools
+        multiply_result = await multiply_tool.ainvoke(input_message)
+        divide_result = await divide_tool.ainvoke(input_message)
+        subtract_result = await subtract_tool.ainvoke(input_message)
+        inequality_result = await inequality_tool.ainvoke(input_message)
+
+        # Combine all results
+        response += "Calculation Results:\n"
+        response += f"{multiply_result}\n"
+        response += f"{divide_result}\n"
+        response += f"{subtract_result}\n"
+        response += f"{inequality_result}\n"
+
+        return response
+
+    yield FunctionInfo.from_fn(
+        _simple_calculator,
+        description=("A calculator that performs multiple mathematical operations on two numbers. "
+                     "It first gets the current time and then performs multiplication, division, "
+                     "subtraction, and inequality comparison on the provided numbers."))

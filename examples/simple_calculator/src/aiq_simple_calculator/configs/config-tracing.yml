@@ -65,7 +65,7 @@ llms:
     max_tokens: 2000
 
 workflow:
-  _type: react_agent
+  _type: simple_calculator
   tool_names:
     - calculator_multiply
     - calculator_inequality
