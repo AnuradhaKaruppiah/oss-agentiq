@@ -20,6 +20,13 @@
 general:
   use_uvloop: true
 
+servers:
+  time_server:
+    _type: mcp_server
+    transport_type: stdio
+    command: "python"
+    args: ["-m", "mcp_server_time", "--local-timezone=America/Los_Angeles"]
+
 functions:
   calculator_multiply:
     _type: calculator_multiply
@@ -29,9 +36,7 @@ functions:
     _type: aiq_simple_calculator/calculator_divide
   mcp_time_tool:
     _type: mcp_tool_wrapper
-    client_type: stdio
-    command: "python"
-    args: ["-m", "mcp_server_time", "--local-timezone=America/Los_Angeles"]
+    server: time_server
     mcp_tool_name: get_current_time
     description: "Returns the current date and time from the MCP server"
   calculator_subtract:

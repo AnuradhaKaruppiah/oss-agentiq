@@ -19,6 +19,9 @@ import logging
 import anyio
 import click
 
+from aiq.data_models.server import ServerBaseConfig
+from aiq.data_models.tool import MCPToolConfig
+
 # Suppress verbose logs from mcp.client.sse and httpx
 logging.getLogger("mcp.client.sse").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -189,3 +192,55 @@ def list_mcp(ctx, direct, url, client_type, command, args, env, tool, detail, js
     else:
         for tool_dict in tools:
             click.echo(tool_dict['name'])
+
+
+def format_server_info(server: ServerBaseConfig) -> str:
+    """Format server information for display.
+
+    Args:
+        server: The server configuration to format.
+
+    Returns:
+        A formatted string containing server information.
+    """
+    info = []
+    info.append(f"Server Type: {server.server_type}")
+    info.append(f"Transport Type: {server.transport_type}")
+    if server.url:
+        info.append(f"URL: {server.url}")
+    if server.command:
+        info.append(f"Command: {server.command}")
+        if server.args:
+            info.append(f"Arguments: {' '.join(server.args)}")
+        if server.env:
+            info.append("Environment Variables:")
+            for key, value in server.env.items():
+                info.append(f"  {key}={value}")
+    return "\n".join(info)
+
+
+def format_tool_info(tool: MCPToolConfig) -> str:
+    """Format tool information for display.
+
+    Args:
+        tool: The tool configuration to format.
+
+    Returns:
+        A formatted string containing tool information.
+    """
+    info = []
+    if tool.server:
+        info.append(f"Server Reference: {tool.server}")
+    else:
+        info.append(f"Transport Type: {tool.transport_type}")
+        if tool.url:
+            info.append(f"URL: {tool.url}")
+        if tool.command:
+            info.append(f"Command: {tool.command}")
+            if tool.args:
+                info.append(f"Arguments: {' '.join(tool.args)}")
+            if tool.env:
+                info.append("Environment Variables:")
+                for key, value in tool.env.items():
+                    info.append(f"  {key}={value}")
+    return "\n".join(info)

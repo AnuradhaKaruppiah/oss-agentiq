@@ -62,6 +62,8 @@ from aiq.data_models.registry_handler import RegistryHandlerBaseConfig
 from aiq.data_models.registry_handler import RegistryHandlerBaseConfigT
 from aiq.data_models.retriever import RetrieverBaseConfig
 from aiq.data_models.retriever import RetrieverBaseConfigT
+from aiq.data_models.server import ServerBaseConfig
+from aiq.data_models.server import ServerBaseConfigT
 from aiq.data_models.telemetry_exporter import TelemetryExporterBaseConfig
 from aiq.data_models.telemetry_exporter import TelemetryExporterConfigT
 from aiq.memory.interfaces import MemoryEditor
@@ -112,6 +114,8 @@ RetrieverProviderRegisteredCallableT = Callable[[RetrieverBaseConfigT, Builder],
 RetrieverClientRegisteredCallableT = Callable[[RetrieverBaseConfigT, Builder], AbstractAsyncContextManager[typing.Any]]
 RegistryHandlerRegisteredCallableT = Callable[[RegistryHandlerBaseConfigT],
                                               AbstractAsyncContextManager[AbstractRegistryHandler]]
+
+ServerRegisteredCallableT = Callable[[ServerBaseConfigT, Builder], AsyncIterator[ServerBaseConfigT]]
 
 
 class RegisteredInfo(BaseModel, typing.Generic[TypedBaseModelT]):
@@ -268,6 +272,14 @@ class RegisteredPackage(BaseModel):
     discovery_metadata: DiscoveryMetadata
 
 
+class RegisteredServerInfo(RegisteredInfo[ServerBaseConfig]):
+    """
+    Represents a registered server. Servers are shared resources that can be used by multiple tools.
+    """
+    build_fn: ServerRegisteredCallableT = Field(repr=False)
+    framework_wrappers: list[str] = Field(default_factory=list)
+
+
 class TypeRegistry:  # pylint: disable=too-many-public-methods
 
     def __init__(self) -> None:
@@ -319,6 +331,8 @@ class TypeRegistry:  # pylint: disable=too-many-public-methods
 
         # Packages
         self._registered_packages: dict[str, RegisteredPackage] = {}
+
+        self._servers: dict[str, RegisteredServerInfo] = {}
 
         self._registration_changed_hooks: list[Callable[[], None]] = []
         self._registration_changed_hooks_active: bool = True
@@ -849,6 +863,49 @@ class TypeRegistry:  # pylint: disable=too-many-public-methods
             return self._do_compute_annotation(cls, self.get_registered_logging_method())
 
         raise ValueError(f"Supplied an unsupported component type {cls}")
+
+    def register_server(self,
+                        config_type: type[ServerBaseConfigT],
+                        build_fn: ServerRegisteredCallableT,
+                        framework_wrappers: list[str] | None = None) -> None:
+        """Register a server type.
+
+        Args:
+            config_type (type[ServerBaseConfigT]): The server configuration type.
+            build_fn (ServerRegisteredCallableT): The function that builds the server.
+            framework_wrappers (list[str] | None, optional): List of framework wrappers. Defaults to None.
+        """
+        if framework_wrappers is None:
+            framework_wrappers = []
+
+        self._servers[config_type.model_config["title"]] = RegisteredServerInfo(config_type=config_type,
+                                                                                build_fn=build_fn,
+                                                                                framework_wrappers=framework_wrappers)
+
+    def get_server(self, name: str) -> RegisteredServerInfo:
+        """Get a registered server by name.
+
+        Args:
+            name (str): The name of the server.
+
+        Returns:
+            RegisteredServerInfo: The registered server info.
+
+        Raises:
+            KeyError: If the server is not registered.
+        """
+        if name not in self._servers:
+            raise KeyError(f"Server '{name}' is not registered")
+        return self._servers[name]
+
+    @property
+    def servers(self) -> dict[str, RegisteredServerInfo]:
+        """Get all registered servers.
+
+        Returns:
+            dict[str, RegisteredServerInfo]: All registered servers.
+        """
+        return self._servers
 
 
 class GlobalTypeRegistry:

@@ -43,6 +43,8 @@ from aiq.cli.type_registry import RetrieverClientBuildCallableT
 from aiq.cli.type_registry import RetrieverClientRegisteredCallableT
 from aiq.cli.type_registry import RetrieverProviderBuildCallableT
 from aiq.cli.type_registry import RetrieverProviderRegisteredCallableT
+from aiq.cli.type_registry import ServerBuildCallableT
+from aiq.cli.type_registry import ServerRegisteredCallableT
 from aiq.cli.type_registry import TeleExporterRegisteredCallableT
 from aiq.cli.type_registry import TelemetryExporterBuildCallableT
 from aiq.cli.type_registry import TelemetryExporterConfigT
@@ -57,6 +59,7 @@ from aiq.data_models.llm import LLMBaseConfigT
 from aiq.data_models.memory import MemoryBaseConfigT
 from aiq.data_models.registry_handler import RegistryHandlerBaseConfigT
 from aiq.data_models.retriever import RetrieverBaseConfigT
+from aiq.data_models.server import ServerBaseConfigT
 
 
 def register_telemetry_exporter(config_type: type[TelemetryExporterConfigT]):
@@ -406,3 +409,26 @@ def register_registry_handler(config_type: type[RegistryHandlerBaseConfigT]):
         return context_manager_fn
 
     return register_registry_handler_inner
+
+
+def register_server(config_type: type[ServerBaseConfigT]):
+
+    def register_server_inner(
+            fn: ServerBuildCallableT[ServerBaseConfigT]) -> ServerRegisteredCallableT[ServerBaseConfigT]:
+        from .type_registry import GlobalTypeRegistry
+        from .type_registry import RegisteredServerInfo
+
+        context_manager_fn = asynccontextmanager(fn)
+
+        discovery_metadata = DiscoveryMetadata.from_config_type(config_type=config_type,
+                                                                component_type=AIQComponentEnum.SERVER)
+
+        GlobalTypeRegistry.get().register_server(
+            RegisteredServerInfo(full_type=config_type.full_type,
+                                 config_type=config_type,
+                                 build_fn=context_manager_fn,
+                                 discovery_metadata=discovery_metadata))
+
+        return context_manager_fn
+
+    return register_server_inner

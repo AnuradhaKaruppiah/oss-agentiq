@@ -28,6 +28,7 @@ from aiq.data_models.component_ref import FunctionRef
 from aiq.data_models.component_ref import LLMRef
 from aiq.data_models.component_ref import MemoryRef
 from aiq.data_models.component_ref import RetrieverRef
+from aiq.data_models.component_ref import ServerRef
 from aiq.data_models.embedder import EmbedderBaseConfig
 from aiq.data_models.evaluator import EvaluatorBaseConfig
 from aiq.data_models.function import FunctionBaseConfig
@@ -35,6 +36,7 @@ from aiq.data_models.function_dependencies import FunctionDependencies
 from aiq.data_models.llm import LLMBaseConfig
 from aiq.data_models.memory import MemoryBaseConfig
 from aiq.data_models.retriever import RetrieverBaseConfig
+from aiq.data_models.server import ServerBaseConfig
 from aiq.memory.interfaces import MemoryEditor
 from aiq.retriever.interface import AIQRetriever
 
@@ -106,6 +108,18 @@ class Builder(ABC):  # pylint: disable=too-many-public-methods
 
     @abstractmethod
     def get_llm_config(self, llm_name: str | LLMRef) -> LLMBaseConfig:
+        pass
+
+    @abstractmethod
+    async def add_server(self, name: str | ServerRef, config: ServerBaseConfig):
+        pass
+
+    @abstractmethod
+    def get_server(self, name: str | ServerRef) -> ServerBaseConfig:
+        pass
+
+    @abstractmethod
+    def get_server_config(self, name: str | ServerRef) -> ServerBaseConfig:
         pass
 
     @abstractmethod

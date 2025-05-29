@@ -20,6 +20,7 @@ import warnings
 from contextlib import AbstractAsyncContextManager
 from contextlib import AsyncExitStack
 from contextlib import asynccontextmanager
+from typing import Any
 
 from aiq.builder.builder import Builder
 from aiq.builder.builder import UserManagerHolder
@@ -42,6 +43,7 @@ from aiq.data_models.component_ref import FunctionRef
 from aiq.data_models.component_ref import LLMRef
 from aiq.data_models.component_ref import MemoryRef
 from aiq.data_models.component_ref import RetrieverRef
+from aiq.data_models.component_ref import ServerRef
 from aiq.data_models.config import AIQConfig
 from aiq.data_models.config import GeneralConfig
 from aiq.data_models.embedder import EmbedderBaseConfig
@@ -50,6 +52,7 @@ from aiq.data_models.function_dependencies import FunctionDependencies
 from aiq.data_models.llm import LLMBaseConfig
 from aiq.data_models.memory import MemoryBaseConfig
 from aiq.data_models.retriever import RetrieverBaseConfig
+from aiq.data_models.server import ServerBaseConfig
 from aiq.data_models.telemetry_exporter import TelemetryExporterBaseConfig
 from aiq.memory.interfaces import MemoryEditor
 from aiq.profiler.decorators.framework_wrapper import chain_wrapped_build_fn
@@ -105,6 +108,12 @@ class ConfiguredRetriever:
     instance: RetrieverProviderInfo
 
 
+@dataclasses.dataclass
+class ConfiguredServer:
+    config: ServerBaseConfig
+    instance: Any  # The actual server instance
+
+
 # pylint: disable=too-many-public-methods
 class WorkflowBuilder(Builder, AbstractAsyncContextManager):
 
@@ -130,6 +139,7 @@ class WorkflowBuilder(Builder, AbstractAsyncContextManager):
         self._embedders: dict[str, ConfiguredEmbedder] = {}
         self._memory_clients: dict[str, ConfiguredMemory] = {}
         self._retrievers: dict[str, ConfiguredRetriever] = {}
+        self._servers: dict[str, ConfiguredServer] = {}
 
         self._context_state = AIQContextState.get()
 
@@ -243,6 +253,10 @@ class WorkflowBuilder(Builder, AbstractAsyncContextManager):
                            retrievers={
                                k: v.config
                                for k, v in self._retrievers.items()
+                           },
+                           servers={
+                               k: v.config
+                               for k, v in self._servers.items()
                            })
 
         if (entry_function is None):
@@ -275,6 +289,10 @@ class WorkflowBuilder(Builder, AbstractAsyncContextManager):
                                           retrievers={
                                               k: v.instance
                                               for k, v in self._retrievers.items()
+                                          },
+                                          servers={
+                                              k: v.instance
+                                              for k, v in self._servers.items()
                                           },
                                           context_state=self._context_state)
 
@@ -586,6 +604,61 @@ class WorkflowBuilder(Builder, AbstractAsyncContextManager):
     def get_user_manager(self):
         return UserManagerHolder(context=AIQContext(self._context_state))
 
+    async def add_server(self, name: str | ServerRef, config: ServerBaseConfig):
+        """Add a server to the workflow builder.
+
+        Args:
+            name (str | ServerRef): The name of the server.
+            config (ServerBaseConfig): The server configuration.
+
+        Raises:
+            ValueError: If a server with the same name already exists.
+        """
+        if name in self._servers:
+            raise ValueError(f"Server `{name}` already exists in the list of servers")
+
+        try:
+            server_info = self._registry.get_server(type(config))
+            server_instance = await self._get_exit_stack().enter_async_context(server_info.build_fn(config, self))
+            self._servers[name] = ConfiguredServer(config=config, instance=server_instance)
+        except Exception as e:
+            logger.error("Error adding server `%s` with config `%s`", name, config, exc_info=True)
+            raise e
+
+    def get_server(self, name: str | ServerRef) -> Any:
+        """Get a server by name.
+
+        Args:
+            name (str | ServerRef): The name of the server.
+
+        Returns:
+            Any: The server instance.
+
+        Raises:
+            ValueError: If the server is not found.
+        """
+        if name not in self._servers:
+            raise ValueError(f"Server `{name}` not found")
+
+        return self._servers[name].instance
+
+    def get_server_config(self, name: str | ServerRef) -> ServerBaseConfig:
+        """Get a server's configuration by name.
+
+        Args:
+            name (str | ServerRef): The name of the server.
+
+        Returns:
+            ServerBaseConfig: The server configuration.
+
+        Raises:
+            ValueError: If the server is not found.
+        """
+        if name not in self._servers:
+            raise ValueError(f"Server `{name}` not found")
+
+        return self._servers[name].config
+
     async def populate_builder(self, config: AIQConfig, skip_workflow: bool = False):
         """
         Populate the builder with components and optionally set up the workflow.
@@ -593,7 +666,6 @@ class WorkflowBuilder(Builder, AbstractAsyncContextManager):
         Args:
             config (AIQConfig): The configuration object containing component definitions.
             skip_workflow (bool): If True, skips the workflow instantiation step. Defaults to False.
-
         """
         # Generate the build sequence
         build_sequence = build_dependency_sequence(config)
@@ -612,6 +684,9 @@ class WorkflowBuilder(Builder, AbstractAsyncContextManager):
             # Instantiate a retriever client
             elif component_instance.component_group == ComponentGroup.RETRIEVERS:
                 await self.add_retriever(component_instance.name, component_instance.config)
+            # Instantiate a server
+            elif component_instance.component_group == ComponentGroup.SERVERS:
+                await self.add_server(component_instance.name, component_instance.config)
             # Instantiate a function
             elif component_instance.component_group == ComponentGroup.FUNCTIONS:
                 # If the function is the root, set it as the workflow later
@@ -636,9 +711,7 @@ class WorkflowBuilder(Builder, AbstractAsyncContextManager):
 class ChildBuilder(Builder):
 
     def __init__(self, workflow_builder: WorkflowBuilder) -> None:
-
         self._workflow_builder = workflow_builder
-
         self._dependencies = FunctionDependencies()
 
     @property
@@ -653,9 +726,7 @@ class ChildBuilder(Builder):
     def get_function(self, name: str) -> Function:
         # If a function tries to get another function, we assume it uses it
         fn = self._workflow_builder.get_function(name)
-
         self._dependencies.add_function(name)
-
         return fn
 
     @override
@@ -678,9 +749,7 @@ class ChildBuilder(Builder):
     def get_tool(self, fn_name: str, wrapper_type: LLMFrameworkEnum | str):
         # If a function tries to get another function as a tool, we assume it uses it
         fn = self._workflow_builder.get_tool(fn_name, wrapper_type)
-
         self._dependencies.add_function(fn_name)
-
         return fn
 
     @override
@@ -690,14 +759,24 @@ class ChildBuilder(Builder):
     @override
     async def get_llm(self, llm_name: str, wrapper_type: LLMFrameworkEnum | str):
         llm = await self._workflow_builder.get_llm(llm_name, wrapper_type)
-
         self._dependencies.add_llm(llm_name)
-
         return llm
 
     @override
     def get_llm_config(self, llm_name: str) -> LLMBaseConfig:
         return self._workflow_builder.get_llm_config(llm_name)
+
+    @override
+    async def add_server(self, name: str, config: ServerBaseConfig):
+        return await self._workflow_builder.add_server(name, config)
+
+    @override
+    def get_server(self, name: str) -> ServerBaseConfig:
+        return self._workflow_builder.get_server(name)
+
+    @override
+    def get_server_config(self, name: str) -> ServerBaseConfig:
+        return self._workflow_builder.get_server_config(name)
 
     @override
     async def add_embedder(self, name: str, config: EmbedderBaseConfig):
@@ -706,9 +785,7 @@ class ChildBuilder(Builder):
     @override
     async def get_embedder(self, embedder_name: str, wrapper_type: LLMFrameworkEnum | str):
         embedder = await self._workflow_builder.get_embedder(embedder_name, wrapper_type)
-
         self._dependencies.add_embedder(embedder_name)
-
         return embedder
 
     @override
@@ -725,9 +802,7 @@ class ChildBuilder(Builder):
         Return the instantiated memory client for the given name.
         """
         memory_client = self._workflow_builder.get_memory_client(memory_name)
-
         self._dependencies.add_memory_client(memory_name)
-
         return memory_client
 
     @override

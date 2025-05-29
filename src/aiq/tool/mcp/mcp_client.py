@@ -18,10 +18,10 @@ from __future__ import annotations
 import logging
 from abc import ABC
 from abc import abstractmethod
-from contextlib import AsyncExitStack
 from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Any
+from typing import Literal
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -89,43 +89,38 @@ def model_from_mcp_schema(name: str, mcp_input_schema: dict) -> type[BaseModel]:
     return create_model(f"{_generate_valid_classname(name)}InputSchema", **schema_dict)
 
 
-class MCPBaseClient(ABC):
-    """
-    Base client for creating a session and connecting to an MCP server
-    """
+class MCPClient(ABC):
+    """Base class for MCP clients."""
 
-    def __init__(self, client_type: str = 'sse'):
-        self._tools = None
-        self._client_type = client_type.lower()
-        if self._client_type not in ['sse', 'stdio', 'streamable-http']:
-            raise ValueError("client_type must be either 'sse', 'stdio' or 'streamable-http'")
+    def __init__(self, transport_type: Literal["sse", "stdio", "streamable-http"]):
+        """Initialize the MCP client.
 
-        self._exit_stack: AsyncExitStack | None = None
-
+        Args:
+            transport_type: The type of transport to use.
+        """
+        self.transport_type = transport_type
         self._session: ClientSession | None = None
 
     @property
     def client_type(self) -> str:
-        return self._client_type
+        return self.transport_type
 
     async def __aenter__(self):
-        if self._exit_stack:
-            raise RuntimeError("MCPBaseClient already initialized. Use async with to initialize.")
+        if self._session_group:
+            raise RuntimeError("MCPClient already initialized. Use async with to initialize.")
 
-        self._exit_stack = AsyncExitStack()
-
-        self._session = await self._exit_stack.enter_async_context(self.connect_to_server())
+        self._session = await self.enter_async_context(self.connect_to_server())
 
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
 
-        if not self._exit_stack:
-            raise RuntimeError("MCPBaseClient not initialized. Use async with to initialize.")
+        if not self._session_group:
+            raise RuntimeError("MCPClient not initialized. Use async with to initialize.")
 
-        await self._exit_stack.aclose()
+        await self._session_group.aclose()
         self._session = None
-        self._exit_stack = None
+        self._session_group = None
 
     @abstractmethod
     @asynccontextmanager
@@ -141,7 +136,7 @@ class MCPBaseClient(ABC):
         """
 
         if not self._session:
-            raise RuntimeError("MCPBaseClient not initialized. Use async with to initialize.")
+            raise RuntimeError("MCPClient not initialized. Use async with to initialize.")
 
         response = await self._session.list_tools()
 
@@ -167,85 +162,62 @@ class MCPBaseClient(ABC):
         Raise:
             ValueError if no tool is available with that name.
         """
-        if not self._exit_stack:
-            raise RuntimeError("MCPBaseClient not initialized. Use async with to initialize.")
+        if not self._session_group:
+            raise RuntimeError("MCPClient not initialized. Use async with to initialize.")
 
-        if not self._tools:
-            self._tools = await self.get_tools()
+        tools = await self.get_tools()
 
-        tool = self._tools.get(tool_name)
+        tool = tools.get(tool_name)
         if not tool:
             raise ValueError(f"Tool {tool_name} not available")
         return tool
 
     async def call_tool(self, tool_name: str, tool_args: dict | None):
         if not self._session:
-            raise RuntimeError("MCPBaseClient not initialized. Use async with to initialize.")
+            raise RuntimeError("MCPClient not initialized. Use async with to initialize.")
 
         result = await self._session.call_tool(tool_name, tool_args)
         return result
 
 
-class MCPSSEClient(MCPBaseClient):
-    """
-    Client for creating a session and connecting to an MCP server using SSE
+class MCPSSEClient(MCPClient):
+    """MCP client that communicates with a server via SSE."""
 
-    Args:
-      url (str): The url of the MCP server
-      client_type (str): The type of client to use ('sse' or 'stdio')
-    """
+    def __init__(self, url: str):
+        """Initialize the MCP SSE client.
 
-    def __init__(self, url: str, client_type: str = 'sse'):
-        super().__init__(client_type)
-        self._url = url
-
-    @property
-    def url(self) -> str:
-        return self._url
+        Args:
+            url: The URL of the SSE endpoint.
+        """
+        super().__init__(transport_type="sse")
+        self.url = url
 
     @asynccontextmanager
     async def connect_to_server(self):
         """
         Establish a session with an MCP SSE server within an async context
         """
-        async with sse_client(url=self._url) as (read, write):
+        async with sse_client(url=self.url) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 yield session
 
 
-class MCPStdioClient(MCPBaseClient):
-    """
-    Client for creating a session and connecting to an MCP server using stdio
+class MCPStdioClient(MCPClient):
+    """MCP client that communicates with a server via stdio."""
 
-    Args:
-      command (str): The command to run
-      args (list[str] | None): Additional arguments for the command
-      env (dict[str, str] | None): Environment variables to set for the process
-      client_type (str): The type of client to use ('sse' or 'stdio')
-    """
+    def __init__(self, command: str, args: list[str] | None = None, env: dict[str, str] | None = None):
+        """Initialize the MCP stdio client.
 
-    def __init__(self,
-                 command: str,
-                 args: list[str] | None = None,
-                 env: dict[str, str] | None = None,
-                 client_type: str = 'stdio'):
-        super().__init__(client_type)
-        self._command = command
-        self._args = args
-        self._env = env
-
-    @property
-    def command(self) -> str:
-        return self._command
-
-    @property
-    def args(self) -> list[str] | None:
-        return self._args
-
-    @property
-    def env(self) -> dict[str, str] | None:
-        return self._env
+        Args:
+            command: The command to run.
+            args: Optional arguments to pass to the command.
+            env: Optional environment variables to set.
+        """
+        super().__init__(transport_type="stdio")
+        self.command = command
+        self.args = args or []
+        self.env = env or {}
 
     @asynccontextmanager
     async def connect_to_server(self):
@@ -253,33 +225,31 @@ class MCPStdioClient(MCPBaseClient):
         Establish a session with an MCP server via stdio within an async context
         """
 
-        server_params = StdioServerParameters(command=self._command, args=self._args or [], env=self._env)
+        server_params = StdioServerParameters(command=self.command, args=self.args, env=self.env)
         async with stdio_client(server_params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 yield session
 
 
-class MCPStreamableHTTPClient(MCPBaseClient):
-    """
-    Client for creating a session and connecting to an MCP server using streamable-http
-    """
+class MCPStreamableHTTPClient(MCPClient):
+    """MCP client that communicates with a server via streamable HTTP."""
 
-    def __init__(self, url: str, client_type: str = 'streamable-http'):
-        super().__init__(client_type)
+    def __init__(self, url: str):
+        """Initialize the MCP streamable HTTP client.
 
-        self._url = url
-
-    @property
-    def url(self) -> str:
-        return self._url
+        Args:
+            url: The URL of the streamable HTTP endpoint.
+        """
+        super().__init__(transport_type="streamable-http")
+        self.url = url
 
     @asynccontextmanager
     async def connect_to_server(self):
         """
         Establish a session with an MCP server via streamable-http within an async context
         """
-        async with streamablehttp_client(url=self._url) as (read, write, get_session_id):
+        async with streamablehttp_client(url=self.url) as (read, write, get_session_id):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 yield session

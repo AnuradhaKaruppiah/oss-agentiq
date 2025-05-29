@@ -42,6 +42,7 @@ _component_group_order = [
     ComponentGroup.LLMS,
     ComponentGroup.MEMORY,
     ComponentGroup.RETRIEVERS,
+    ComponentGroup.SERVERS,
     ComponentGroup.FUNCTIONS
 ]
 

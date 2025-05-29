@@ -257,6 +257,31 @@ async def test_function(mcp_client: MCPBaseClient):
         assert result == "value 42 env value"
 
 
+def test_mcp_tool_validation():
+    """Test MCP tool validation."""
+    # Test server reference validation
+    with pytest.raises(ValueError, match="Either server reference or direct configuration must be provided"):
+        MCPToolConfig()
+
+    with pytest.raises(ValueError, match="Cannot use both server reference and direct configuration"):
+        MCPToolConfig(server="test", url="http://test")
+
+    # Test stdio transport type validation
+    with pytest.raises(ValueError, match="url should not be set when using stdio transport type"):
+        MCPToolConfig(transport_type="stdio", url="http://test")
+
+    with pytest.raises(ValueError, match="command is required when using stdio transport type"):
+        MCPToolConfig(transport_type="stdio")
+
+    # Test sse/streamable-http transport type validation
+    with pytest.raises(ValueError,
+                       match="command, args, and env should not be set when using sse/streamable-http transport type"):
+        MCPToolConfig(transport_type="sse", command="test")
+
+    with pytest.raises(ValueError, match="url is required when using sse/streamable-http transport type"):
+        MCPToolConfig(transport_type="sse")
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="MCP Server")
