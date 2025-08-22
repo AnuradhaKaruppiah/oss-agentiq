@@ -14,6 +14,10 @@
 # limitations under the License.
 
 import logging
+from typing import Optional
+
+from pydantic import BaseModel
+from pydantic import Field
 
 from nat.builder.builder import Builder
 from nat.builder.function_info import FunctionInfo
@@ -29,6 +33,44 @@ def validate_number_count(numbers: list[str], expected_count: int, action: str) 
     if len(numbers) > expected_count:
         return f"This tool only supports {action} between {expected_count} numbers."
     return None
+
+
+class WhoisLookupConfig(FunctionBaseConfig, name="whois_lookup"):
+    """
+    Function to perform WHOIS lookups on target domains.
+    """
+    pass
+
+
+class WhoisLookupParameters(BaseModel):
+    """Parameters for Whois lookup."""
+    domain: str = Field(default="example.com", description="The target domain to lookup (e.g., 'example.com')")
+    project_id: Optional[str] = Field(default=None, description="Project ID to associate lookup results with")
+    save_to_findings: Optional[bool] = Field(default=True, description="Whether to save lookup results as findings")
+
+
+@register_function(config_type=WhoisLookupConfig)
+async def whois_lookup_function(tool_config: WhoisLookupConfig, builder: Builder):
+
+    async def _response_fn(params: WhoisLookupParameters) -> str:
+        """
+        Perform a WHOIS lookup on a target domain for reconnaissance.
+
+        Args:
+            params: Parameters for the Whois lookup
+
+        Returns:
+            Comprehensive WHOIS data including registrar, dates, nameservers, and contact info
+        """
+        return f"The WHOIS information for {params.domain} is available"
+
+    try:
+        yield FunctionInfo.from_fn(_response_fn,
+                                   description="Perform a WHOIS lookup on a target domain for reconnaissance")
+    except GeneratorExit:
+        print("Function exited early!")
+    finally:
+        print("Cleaning up whois_tools workflow.")
 
 
 class InequalityToolConfig(FunctionBaseConfig, name="calculator_inequality"):

@@ -27,6 +27,8 @@ functions:
     _type: current_datetime
   calculator_subtract:
     _type: calculator_subtract
+  whois_lookup:
+    _type: whois_lookup
 
 llms:
   nim_llm:
@@ -47,6 +49,7 @@ workflow:
     - current_datetime
     - calculator_divide
     - calculator_subtract
+    - whois_lookup
   llm_name: nim_llm
   verbose: true
   parse_agent_response_max_retries: 3

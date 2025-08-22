@@ -17,9 +17,11 @@ import json
 import logging
 from inspect import Parameter
 from inspect import Signature
+from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
+from pydantic import Field
 
 from nat.builder.function import Function
 from nat.builder.function_base import FunctionBase
@@ -70,13 +72,20 @@ def create_function_wrapper(
             # Get the field type and convert to appropriate Python type
             field_type = field.annotation
 
+            # Create an Annotated type that includes the Field description
+            # This allows FastMCP to extract the description for the tool schema
+            if field.description:
+                annotated_type = Annotated[field_type, Field(description=field.description)]
+            else:
+                annotated_type = field_type
+
             # Add the parameter to our list
             parameters.append(
                 Parameter(
                     name=name,
                     kind=Parameter.KEYWORD_ONLY,
                     default=Parameter.empty if field.is_required else None,
-                    annotation=field_type,
+                    annotation=annotated_type,
                 ))
 
     # Create the function signature WITHOUT the ctx parameter
