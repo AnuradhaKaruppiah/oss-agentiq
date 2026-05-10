@@ -274,6 +274,50 @@ The checker uses ordered subsequence matching:
 - `match (poorer)`: candidate is missing tool calls but preserves order
 - `mismatch`: tool order cannot be reconciled
 
+## AgentEvals Trajectory Match
+
+The same artifacts can also be checked with the LangChain AgentEvals trajectory
+match evaluator. While the ATIF adapter is still on a fork, pass the local
+AgentEvals Python source path explicitly:
+
+```bash
+export HARBOR_JOBS_DIR=.tmp/harbor/opencode-nemoflow-smoke
+export JOB_NAME=opencode-nemoflow-repeatable-smoke-1
+
+.venv/bin/python -m nat_harbor.smoke.match_atif_trajectories \
+  --job-dir "$HARBOR_JOBS_DIR/$JOB_NAME" \
+  --output-dir "$HARBOR_JOBS_DIR/$JOB_NAME/post-run-agentevals-match" \
+  --agentevals-python-path external/agentevals/python \
+  --trajectory-match-mode superset \
+  --tool-args-match-mode exact
+```
+
+Use `strict` when the two ATIF trajectories should be equivalent after
+conversion to OpenAI-style messages. Use `superset` for the OpenCode NeMo-Flow
+smoke comparison, where the ATOF-derived trajectory is expected to preserve the
+native trajectory while exposing additional events.
+
+## AgentEvals LLM Judge
+
+For a reference-free quality signal, score each ATIF trajectory independently
+with the AgentEvals LLM-as-judge trajectory evaluator. This avoids treating the
+native OpenCode trajectory as ground truth.
+
+```bash
+export HARBOR_JOBS_DIR=.tmp/harbor/opencode-nemoflow-smoke
+export JOB_NAME=opencode-nemoflow-repeatable-smoke-1
+export AGENTEVALS_TRAJECTORY_JUDGE_MODEL=<langchain-model-id>
+
+.venv/bin/python -m nat_harbor.smoke.judge_atif_trajectories \
+  --job-dir "$HARBOR_JOBS_DIR/$JOB_NAME" \
+  --output-dir "$HARBOR_JOBS_DIR/$JOB_NAME/post-run-agentevals-judge" \
+  --agentevals-python-path external/agentevals/python \
+  --continuous
+```
+
+The judge writes native and candidate scores plus
+`score_delta = candidate_score - native_score`.
+
 ## Post-Run Trajectory Scoring
 
 After the smoke run completes, score the native and ATOF-derived ATIF
