@@ -43,6 +43,7 @@ from .message_handler import WebSocketMessageHandler
 from .routes.auth import add_authorization_route
 from .routes.chat import add_chat_routes
 from .routes.execution import add_execution_routes
+from .routes.gym import add_gym_routes
 from .routes.generate import add_generate_routes
 from .routes.health import add_health_route
 from .routes.monitor import add_monitor_route
@@ -340,6 +341,7 @@ class FastApiFrontEndPluginWorker(FastApiFrontEndPluginWorkerBase):
         await add_static_files_route(self, app, builder)
 
         await self.add_default_route(app, session_manager)
+        await add_gym_routes(self, app, session_manager)
 
         try:
             from nat.plugins.eval.fastapi.routes import add_evaluate_routes

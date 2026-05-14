@@ -275,6 +275,16 @@ class FastApiFrontEndConfig(FrontEndBaseConfig, name="fastapi"):
         description="Executes the default NAT workflow from the loaded configuration ",
     )
 
+    gym: typing.Annotated[
+        EndpointBase,
+        Field(description="Endpoint that returns a NeMo Gym-compatible rollout response."),
+    ] = EndpointBase(
+        method="POST",
+        path="/v1/gym/run",
+        legacy_path="/run",
+        description="Executes the default NAT workflow and returns a NeMo Gym-compatible response.",
+    )
+
     evaluate: typing.Annotated[EndpointBase, Field(description="Endpoint for evaluating workflows.")] = EndpointBase(
         method="POST",
         path="/evaluate",

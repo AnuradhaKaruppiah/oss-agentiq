@@ -24,6 +24,18 @@ from typing import Any
 from typing import Protocol
 
 from harbor.models.verifier.result import VerifierResult
+
+try:
+    from harbor.verifier.base import BaseVerifier
+    from harbor.verifier.base import VerifierContext
+except ImportError:  # pragma: no cover - compatibility with Harbor before verifier hooks.
+
+    class BaseVerifier:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    VerifierContext = Any  # type: ignore[misc, assignment]
+
 from harbor.utils.env import resolve_env_vars
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -36,6 +48,7 @@ DEFAULT_EVALUATOR_TIMEOUT_SEC = 600.0
 
 class InlineVerifierRequest(BaseModel):
     """Request contract for phase-1 inline verifier execution."""
+
     model_config = ConfigDict(frozen=True)
 
     trajectory_path: Path
@@ -51,6 +64,7 @@ class InlineVerifierRequest(BaseModel):
 
 class InlineVerifierResult(BaseModel):
     """Result contract for phase-1 inline verifier execution."""
+
     model_config = ConfigDict(frozen=True)
 
     reward: float
@@ -193,7 +207,8 @@ class DefaultInlineVerifierDriver:
 
         if request.fallback_mode not in {"fail", "raw_output"}:
             raise InlineVerifierError(
-                f"Unsupported fallback mode '{request.fallback_mode}'. Supported values: fail, raw_output.")
+                f"Unsupported fallback mode '{request.fallback_mode}'. Supported values: fail, raw_output."
+            )
 
         if not resolved_trajectory_path.exists():
             if request.fallback_mode == "raw_output":
@@ -260,14 +275,16 @@ class DefaultInlineVerifierDriver:
         )
 
 
-class ATIFInlineVerifier:
+class ATIFInlineVerifier(BaseVerifier):
     """Harbor verifier class that executes NAT ATIF evaluation inline."""
 
     def __init__(
         self,
-        task: Any,
-        trial_paths: Any,
-        environment: Any,
+        context: VerifierContext | None = None,
+        *,
+        task: Any | None = None,
+        trial_paths: Any | None = None,
+        environment: Any | None = None,
         override_env: dict[str, str] | None = None,
         logger: Any | None = None,
         verifier_env: dict[str, str] | None = None,
@@ -275,8 +292,20 @@ class ATIFInlineVerifier:
         driver: InlineVerifierDriver | None = None,
         **_: Any,
     ) -> None:
+        if context is not None:
+            super().__init__(context)
+            task = context.task
+            trial_paths = context.trial_paths
+            environment = context.environment
+            override_env = context.override_env
+            logger = context.logger
+            verifier_env = context.verifier_env
+            step_name = context.step_name
+
         del environment
         del step_name
+        if task is None or trial_paths is None:
+            raise TypeError("ATIFInlineVerifier requires context or task/trial_paths")
         self._task = task
         self._trial_paths = trial_paths
         self._override_env = override_env or {}
@@ -322,8 +351,9 @@ class ATIFInlineVerifier:
             evaluator_name=self._none_if_empty(runtime_env.get("NAT_HARBOR_ATIF_EVALUATOR_NAME")),
             verifier_output_dir=self._trial_paths.verifier_dir,
             fallback_mode=runtime_env.get("NAT_HARBOR_ATIF_FALLBACK_MODE", "fail"),
-            raw_output_path=Path(runtime_env.get("NAT_HARBOR_ATIF_RAW_OUTPUT_PATH",
-                                                 "/logs/agent/nemo-agent-output.txt")),
+            raw_output_path=Path(
+                runtime_env.get("NAT_HARBOR_ATIF_RAW_OUTPUT_PATH", "/logs/agent/nemo-agent-output.txt")
+            ),
             evaluator_timeout_sec=self._evaluator_timeout_sec(runtime_env.get("NAT_HARBOR_ATIF_EVALUATOR_TIMEOUT_SEC")),
         )
         result = await self._driver.verify(request)
@@ -332,8 +362,9 @@ class ATIFInlineVerifier:
         return VerifierResult(rewards=result.rewards)
 
 
-def verify_inline_sync(request: InlineVerifierRequest,
-                       driver: InlineVerifierDriver | None = None) -> InlineVerifierResult:
+def verify_inline_sync(
+    request: InlineVerifierRequest, driver: InlineVerifierDriver | None = None
+) -> InlineVerifierResult:
     """Synchronously run an inline verifier request for CLI callers."""
     active_driver: InlineVerifierDriver = driver or DefaultInlineVerifierDriver()
     return asyncio.run(active_driver.verify(request))
