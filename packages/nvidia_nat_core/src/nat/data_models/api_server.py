@@ -553,7 +553,7 @@ class ResponseATIFTrajectory(BaseModel, ResponseSerializable):
     """Final ATIF trajectory summary emitted at the end of an ATIF stream."""
 
     schema_version: str
-    session_id: str
+    session_id: str | None = None
     agent: dict[str, typing.Any]
     final_metrics: dict[str, typing.Any] | None = None
 

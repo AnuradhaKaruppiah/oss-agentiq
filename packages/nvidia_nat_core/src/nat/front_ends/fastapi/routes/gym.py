@@ -169,6 +169,16 @@ def _evaluator_name(row: dict[str, Any]) -> str | None:
     return str(value) if value else None
 
 
+def _score_eval_output(eval_output: Any, evaluator_name: str, mode: str) -> tuple[float, dict[str, Any]]:
+    output_item = eval_output.eval_output_items[0] if eval_output.eval_output_items else None
+    score = getattr(output_item, "score", None)
+    if not isinstance(score, int | float):
+        score = getattr(eval_output, "average_score", None)
+    reward = float(score) if isinstance(score, int | float) else 0.0
+    details = _dump_jsonable(output_item) if output_item is not None else {}
+    return reward, {"mode": mode, "evaluator_name": evaluator_name, "result": details}
+
+
 def _default_artifact_dir(row: dict[str, Any]) -> Path:
     metadata = _row_metadata(row)
     configured = row.get("artifact_dir") or metadata.get("artifact_dir") or ".tmp/nat-gym/gym-run"
@@ -228,6 +238,7 @@ async def _evaluate_row(
     row: dict[str, Any],
     instruction: str,
     output_text: str,
+    atif_trajectory: dict[str, Any] | None,
 ) -> tuple[float, dict[str, Any]]:
     evaluator_name = _evaluator_name(row)
     if evaluator_name is None:
@@ -240,6 +251,22 @@ async def _evaluate_row(
         )
 
     evaluator = worker._evaluators[evaluator_name]
+    evaluate_atif_fn = getattr(evaluator, "evaluate_atif_fn", None)
+    if callable(evaluate_atif_fn) and atif_trajectory is not None:
+        from nat.atif import ATIFTrajectory
+        from nat.plugins.eval.evaluator.atif_evaluator import AtifEvalSample
+
+        eval_output = await evaluate_atif_fn([
+            AtifEvalSample(
+                item_id=_item_id(row),
+                trajectory=ATIFTrajectory.model_validate(atif_trajectory),
+                expected_output_obj=_expected_output_obj(row),
+                output_obj=output_text,
+                metadata=_row_metadata(row),
+            )
+        ])
+        return _score_eval_output(eval_output, evaluator_name, "atif_evaluator")
+
     eval_item = EvalInputItem(
         id=_item_id(row),
         input_obj=instruction,
@@ -248,13 +275,7 @@ async def _evaluate_row(
         full_dataset_entry=row,
     )
     eval_output = await evaluator.evaluate_fn(EvalInput(eval_input_items=[eval_item]))
-    output_item = eval_output.eval_output_items[0] if eval_output.eval_output_items else None
-    score = getattr(output_item, "score", None)
-    if not isinstance(score, int | float):
-        score = getattr(eval_output, "average_score", None)
-    reward = float(score) if isinstance(score, int | float) else 0.0
-    details = _dump_jsonable(output_item) if output_item is not None else {}
-    return reward, {"mode": "evaluator", "evaluator_name": evaluator_name, "result": details}
+    return _score_eval_output(eval_output, evaluator_name, "evaluator")
 
 
 def _write_artifacts(
@@ -372,6 +393,7 @@ async def add_gym_routes(worker: Any, app: FastAPI, session_manager: SessionMana
             row=row,
             instruction=instruction,
             output_text=output_text,
+            atif_trajectory=atif_trajectory,
         )
         artifact_refs = _write_artifacts(
             row=row,

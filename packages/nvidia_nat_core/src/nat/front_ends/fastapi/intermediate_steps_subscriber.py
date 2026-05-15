@@ -148,18 +148,22 @@ async def pull_intermediate_atif(_q, converter: "ATIFStreamConverter"):
 
     def on_complete_cb():
         logger.debug("ATIF stream complete, flushing pending turn")
-        for remaining in converter.finalize():
-            _enqueue_atif_step(remaining)
+        try:
+            for remaining in converter.finalize():
+                _enqueue_atif_step(remaining)
 
-        trajectory = converter.get_trajectory()
-        summary = ResponseATIFTrajectory(
-            schema_version=trajectory.schema_version,
-            session_id=trajectory.session_id,
-            agent=trajectory.agent.model_dump(exclude_none=True),
-            final_metrics=trajectory.final_metrics.model_dump(exclude_none=True) if trajectory.final_metrics else None,
-        )
-        loop.create_task(_q.put(summary))
-        loop.create_task(set_intermediate_done())
+            trajectory = converter.get_trajectory()
+            summary = ResponseATIFTrajectory(
+                schema_version=trajectory.schema_version,
+                session_id=trajectory.session_id,
+                agent=trajectory.agent.model_dump(exclude_none=True),
+                final_metrics=trajectory.final_metrics.model_dump(exclude_none=True) if trajectory.final_metrics else None,
+            )
+            loop.create_task(_q.put(summary))
+        except Exception:
+            logger.exception("Failed to emit ATIF trajectory summary")
+        finally:
+            loop.create_task(set_intermediate_done())
 
     _ = context.intermediate_step_manager.subscribe(on_next=on_next_cb,
                                                     on_error=on_error_cb,
