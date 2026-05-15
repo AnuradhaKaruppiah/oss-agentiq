@@ -43,6 +43,41 @@ Set the NIM key expected by the configured `nim` LLMs:
 export NVIDIA_API_KEY=<your_key>
 ```
 
+## Gym Dataset
+
+The simple calculator eval data has a Gym-shaped JSONL variant at:
+
+```text
+examples/evaluation_and_profiling/simple_calculator_eval/src/nat_simple_calculator_eval/data/nemo_gym_simple_calculator_tuneable_eval.jsonl
+```
+
+```mermaid
+flowchart LR
+  A[NAT eval dataset] --> B[Adapter]
+  B --> C[Gym JSONL]
+  C --> D[ng_collect_rollouts]
+```
+
+The adapter keeps the NAT eval task intent intact while reshaping each row into
+the contract Gym can send to the NAT `/run` endpoint.
+
+It adapts the 12 rows from
+`examples/getting_started/simple_calculator/data/simple_calculator.json` into
+the shape expected by `ng_collect_rollouts`:
+
+- `responses_create_params.input` contains the calculator prompt.
+- `expected_output_obj` carries the expected answer for the NAT evaluator.
+- `evaluator_name` selects the inline NAT evaluator.
+- `artifact_dir` tells the NAT endpoint where to write artifacts.
+
+The rows intentionally omit `agent_ref`. For direct rollout collection, pass the
+agent once with `+agent_name=nat_simple_calculator_agent`; Gym will attach that
+agent reference to each row before calling `/run`.
+
+This smoke does not require `ng_prepare_data`. For a training/validation data
+pipeline, register the same JSONL in a Gym dataset config and let Gym materialize
+the dataset in the normal data-prep flow.
+
 ## Run: Evaluator Reward
 
 Start NAT with the custom post-process evaluator config:
@@ -116,6 +151,50 @@ Sample output shape, abbreviated:
 ```
 
 Scores and wording vary by model response and judge output.
+
+## Run: Gym Collector
+
+The dataset above is enough for the Gym rollout collector, but Gym also needs a
+head/global config that maps `nat_simple_calculator_agent` to the running NAT
+FastAPI server at `127.0.0.1:18000`. With that server registration in place:
+
+```mermaid
+sequenceDiagram
+  participant Gym as NeMo Gym rollout collection
+  participant NAT as Remote NAT agent server
+
+  Gym->>NAT: POST /run with Gym row
+  NAT->>NAT: Run NAT workflow
+  NAT->>NAT: Run inline evaluator
+  NAT-->>Gym: BaseVerifyResponse<br/>reward + artifact refs
+
+  Gym->>NAT: POST /aggregate_metrics
+  NAT-->>Gym: AggregateMetrics
+```
+
+```bash
+ng_collect_rollouts \
+  +agent_name=nat_simple_calculator_agent \
+  +input_jsonl_fpath=examples/evaluation_and_profiling/simple_calculator_eval/src/nat_simple_calculator_eval/data/nemo_gym_simple_calculator_tuneable_eval.jsonl \
+  +output_jsonl_fpath=.tmp/nat-gym/simple-calculator-eval-rollouts.jsonl \
+  +limit=1 \
+  +num_repeats=1 \
+  +num_samples_in_parallel=1 \
+  +upload_rollouts_to_wandb=false
+```
+
+`ng_collect_rollouts` will:
+
+- read the JSONL task row;
+- attach `agent_ref.name=nat_simple_calculator_agent`;
+- POST the row to `http://127.0.0.1:18000/run`;
+- write the verified rollout JSONL;
+- call `http://127.0.0.1:18000/aggregate_metrics` and write
+  `.tmp/nat-gym/simple-calculator-eval-rollouts_aggregate_metrics.json`.
+
+If the Gym head server is not registered yet, use the direct `curl` commands in
+this README. They exercise the same `/run` and `/aggregate_metrics` contracts
+without the collector routing layer.
 
 ## Run: ATIF Trajectory Evaluator
 
