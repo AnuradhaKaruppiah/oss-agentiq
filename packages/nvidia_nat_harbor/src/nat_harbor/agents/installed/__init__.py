@@ -18,10 +18,12 @@ from .hermes_nemoflow import HermesNeMoFlow
 from .nemo_agent import NemoAgent
 from .policy import is_local_install_allowed
 from .policy import resolve_local_install_policy
+from .profiled_opencode import ProfiledOpenCode
 
 __all__ = [
     "HermesNeMoFlow",
     "NemoAgent",
+    "ProfiledOpenCode",
     "is_local_install_allowed",
     "resolve_local_install_policy",
 ]
