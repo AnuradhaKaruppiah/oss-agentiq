@@ -19,7 +19,9 @@ import re
 from collections.abc import Mapping
 
 from langchain_classic.evaluation import TrajectoryEvalChain
+from langchain_classic.evaluation.agents.trajectory_eval_chain import TrajectoryOutputParser
 from langchain_core.agents import AgentAction
+from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from pydantic import Field
@@ -41,6 +43,7 @@ from nat.utils.exception_handlers.automatic_retries import patch_with_retry
 logger = logging.getLogger(__name__)
 
 _DEFAULT_EVENT_FILTER = [IntermediateStepType.LLM_END, IntermediateStepType.TOOL_END]
+_MAX_TRAJECTORY_SCORE = 5
 
 
 def _coerce_text(value) -> str:
@@ -54,7 +57,9 @@ def _extract_score_from_parser_error(error_text: str) -> float | None:
     """Best-effort extraction of numeric judge score from parser failures."""
     if not error_text:
         return None
-    matches = re.findall(r"score\s*(?:of|:)?\s*([0-9]+(?:\.[0-9]+)?)", error_text, flags=re.IGNORECASE)
+    matches = re.findall(r"score\s*(?:of|:|is)?(?:\*\*|\s)*([0-9]+(?:\.[0-9]+)?)",
+                         error_text,
+                         flags=re.IGNORECASE)
     if not matches:
         return None
     try:
@@ -63,6 +68,40 @@ def _extract_score_from_parser_error(error_text: str) -> float | None:
     except ValueError:
         return None
     return score
+
+
+class _LenientTrajectoryOutputParser(TrajectoryOutputParser):
+    """Parse trajectory judge output while tolerating small `Score:` variants."""
+
+    def parse(self, text: str) -> dict:
+        score_matches = list(
+            re.finditer(r"(?:\*\*)?\s*(?:overall\s+)?score\s*:(?:\*\*|\s)*([0-9]+(?:\.[0-9]+)?)",
+                        text,
+                        flags=re.IGNORECASE))
+        if not score_matches:
+            score_matches = list(
+                re.finditer(r"score\s+(?:is|of)\s*(?:\*\*)?\s*([0-9]+(?:\.[0-9]+)?)",
+                            text,
+                            flags=re.IGNORECASE))
+        if not score_matches:
+            msg = f"Could not find score in model eval output: {text}"
+            raise OutputParserException(msg)
+
+        score_match = score_matches[-1]
+        score_text = score_match.group(1)
+        try:
+            raw_score = float(score_text)
+        except ValueError as e:
+            msg = f"Score is not an integer digit in the range 1-5: {text}"
+            raise OutputParserException(msg) from e
+
+        if not raw_score.is_integer() or not 1 <= raw_score <= _MAX_TRAJECTORY_SCORE:
+            msg = f"Score is not an integer digit in the range 1-5: {text}"
+            raise OutputParserException(msg)
+
+        reasoning = text[:score_match.start()].strip()
+        normalized_score = (int(raw_score) - 1) / (_MAX_TRAJECTORY_SCORE - 1)
+        return {"score": normalized_score, "reasoning": reasoning}
 
 
 class TrajectoryEvaluatorConfig(EvaluatorLLMConfig, name="trajectory"):
@@ -234,6 +273,7 @@ class TrajectoryEvaluator(BaseEvaluator):
         super().__init__(max_concurrency=max_concurrency)
         self.traj_eval_chain = TrajectoryEvalChain.from_llm(llm=llm,
                                                             tools=tools,
+                                                            output_parser=_LenientTrajectoryOutputParser(),
                                                             return_reasoning=True,
                                                             requires_reference=True)
 

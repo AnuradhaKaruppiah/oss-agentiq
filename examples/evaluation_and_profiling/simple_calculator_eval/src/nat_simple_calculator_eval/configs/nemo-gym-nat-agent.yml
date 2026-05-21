@@ -1,0 +1,8 @@
+# Registers an already-running NAT FastAPI server as a NeMo Gym agent server.
+# The entrypoint is intentionally omitted: Gym should discover and call NAT, not
+# launch a duplicate NAT process.
+nat_simple_calculator_agent:
+  responses_api_agents:
+    nat_external_agent:
+      host: 127.0.0.1
+      port: 18000

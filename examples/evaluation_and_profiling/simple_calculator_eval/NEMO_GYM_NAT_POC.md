@@ -19,13 +19,17 @@ In this POC, NAT is the agent server:
 The smoke config uses `nvidia/nemotron-3-nano-30b-a3b` for the calculator agent
 workflow. The eval configs in this example use:
 
+- `config-tunable-rag-eval.yml`
+  - workflow model: `nvidia/nemotron-3-nano-30b-a3b`
+  - judge model: `nvidia/nemotron-3-nano-30b-a3b`
+  - evaluator: `tuneable_eval`
 - `config-with-custom-post-process.yml`
   - workflow model: `meta/llama-3.1-70b-instruct`
   - judge model: `mistralai/mixtral-8x22b-instruct-v0.1`
   - evaluator: `tuneable_eval`
 - `config-trajectory-eval.yml`
   - workflow model: `nvidia/nemotron-3-nano-30b-a3b`
-  - judge model: `mistralai/mixtral-8x22b-instruct-v0.1`
+  - judge model: `nvidia/nemotron-3-nano-30b-a3b`
   - evaluator: `trajectory_eval` with ATIF enabled
 
 ## Setup
@@ -49,6 +53,12 @@ The simple calculator eval data has a Gym-shaped JSONL variant at:
 
 ```text
 examples/evaluation_and_profiling/simple_calculator_eval/src/nat_simple_calculator_eval/data/nemo_gym_simple_calculator_tuneable_eval.jsonl
+```
+
+The ATIF trajectory evaluator variant lives at:
+
+```text
+examples/evaluation_and_profiling/simple_calculator_eval/src/nat_simple_calculator_eval/data/nemo_gym_simple_calculator_trajectory_eval.jsonl
 ```
 
 ```mermaid
@@ -80,11 +90,11 @@ the dataset in the normal data-prep flow.
 
 ## Run: Evaluator Reward
 
-Start NAT with the custom post-process evaluator config:
+Start NAT with the tunable evaluator config:
 
 ```bash
 .venv/bin/nat serve \
-  --config_file examples/evaluation_and_profiling/simple_calculator_eval/src/nat_simple_calculator_eval/configs/config-with-custom-post-process.yml \
+  --config_file examples/evaluation_and_profiling/simple_calculator_eval/src/nat_simple_calculator_eval/configs/config-tunable-rag-eval.yml \
   --host 127.0.0.1 \
   --port 18000
 ```
@@ -156,7 +166,17 @@ Scores and wording vary by model response and judge output.
 
 The dataset above is enough for the Gym rollout collector, but Gym also needs a
 head/global config that maps `nat_simple_calculator_agent` to the running NAT
-FastAPI server at `127.0.0.1:18000`. With that server registration in place:
+FastAPI server at `127.0.0.1:18000`.
+
+That registration is provided by:
+
+```text
+examples/evaluation_and_profiling/simple_calculator_eval/src/nat_simple_calculator_eval/configs/nemo-gym-nat-agent.yml
+```
+
+It intentionally omits an `entrypoint`; Gym should discover the already-running
+NAT server, not launch a duplicate NAT process. With that server registration in
+place:
 
 ```mermaid
 sequenceDiagram
@@ -172,8 +192,26 @@ sequenceDiagram
   NAT-->>Gym: AggregateMetrics
 ```
 
+For the verified collector smoke, start NAT with the tunable evaluator config:
+
 ```bash
-ng_collect_rollouts \
+.venv/bin/nat serve \
+  --config_file examples/evaluation_and_profiling/simple_calculator_eval/src/nat_simple_calculator_eval/configs/config-tunable-rag-eval.yml \
+  --host 127.0.0.1 \
+  --port 18000
+```
+
+Start the Gym head server:
+
+```bash
+external/nemo-gym/.venv/bin/ng_run \
+  '+config_paths=[examples/evaluation_and_profiling/simple_calculator_eval/src/nat_simple_calculator_eval/configs/nemo-gym-nat-agent.yml]'
+```
+
+In another terminal, run the collector:
+
+```bash
+external/nemo-gym/.venv/bin/ng_collect_rollouts \
   +agent_name=nat_simple_calculator_agent \
   +input_jsonl_fpath=examples/evaluation_and_profiling/simple_calculator_eval/src/nat_simple_calculator_eval/data/nemo_gym_simple_calculator_tuneable_eval.jsonl \
   +output_jsonl_fpath=.tmp/nat-gym/simple-calculator-eval-rollouts.jsonl \
@@ -195,6 +233,75 @@ ng_collect_rollouts \
 If the Gym head server is not registered yet, use the direct `curl` commands in
 this README. They exercise the same `/run` and `/aggregate_metrics` contracts
 without the collector routing layer.
+
+Verified output from the collector smoke:
+
+```text
+Finished rollout collection! View results at:
+Fully materialized inputs: .tmp/nat-gym/simple-calculator-eval-rollouts_materialized_inputs.jsonl
+Rollouts: .tmp/nat-gym/simple-calculator-eval-rollouts.jsonl
+Aggregate metrics: .tmp/nat-gym/simple-calculator-eval-rollouts_aggregate_metrics.json
+```
+
+Abbreviated rollout result:
+
+```json
+{
+  "reward": 1.0,
+  "response": {
+    "status": "completed"
+  },
+  "artifact_refs": {
+    "output_text": ".tmp/nat-gym/simple-calculator-eval/run-.../output.txt",
+    "trajectory": ".tmp/nat-gym/simple-calculator-eval/run-.../trajectory.json",
+    "evaluator_details": ".tmp/nat-gym/simple-calculator-eval/run-.../evaluator_details.json"
+  }
+}
+```
+
+Abbreviated aggregate metrics:
+
+```json
+{
+  "agent_metrics": {
+    "num_rollouts": 1,
+    "num_scored_rollouts": 1,
+    "mean_reward": 1.0
+  },
+  "key_metrics": {
+    "mean_reward": 1.0
+  }
+}
+```
+
+The full 12-row tunable evaluator smoke uses the same command with `+limit=12`
+and a distinct output path:
+
+```bash
+external/nemo-gym/.venv/bin/ng_collect_rollouts \
+  +agent_name=nat_simple_calculator_agent \
+  +input_jsonl_fpath=examples/evaluation_and_profiling/simple_calculator_eval/src/nat_simple_calculator_eval/data/nemo_gym_simple_calculator_tuneable_eval.jsonl \
+  +output_jsonl_fpath=.tmp/nat-gym/simple-calculator-eval-rollouts-full.jsonl \
+  +limit=12 \
+  +num_repeats=1 \
+  +num_samples_in_parallel=1 \
+  +upload_rollouts_to_wandb=false
+```
+
+Verified full-run aggregate:
+
+```json
+{
+  "agent_metrics": {
+    "num_rollouts": 12,
+    "num_scored_rollouts": 12,
+    "mean_reward": 0.8929999999999999
+  },
+  "key_metrics": {
+    "mean_reward": 0.8929999999999999
+  }
+}
+```
 
 ## Run: ATIF Trajectory Evaluator
 
@@ -264,6 +371,39 @@ Sample evaluator portion, abbreviated:
 
 The artifact trajectory is written as ATIF JSON and is the same trajectory passed
 to the ATIF evaluator lane.
+
+The trajectory evaluator can also be exercised through the Gym collector:
+
+```bash
+external/nemo-gym/.venv/bin/ng_collect_rollouts \
+  +agent_name=nat_simple_calculator_agent \
+  +input_jsonl_fpath=examples/evaluation_and_profiling/simple_calculator_eval/src/nat_simple_calculator_eval/data/nemo_gym_simple_calculator_trajectory_eval.jsonl \
+  +output_jsonl_fpath=.tmp/nat-gym/simple-calculator-trajectory-eval-rollouts-full-rerun.jsonl \
+  +limit=12 \
+  +num_repeats=1 \
+  +num_samples_in_parallel=1 \
+  +upload_rollouts_to_wandb=false
+```
+
+Verified trajectory full-run aggregate:
+
+```json
+{
+  "agent_metrics": {
+    "num_rollouts": 12,
+    "num_scored_rollouts": 12,
+    "mean_reward": 0.7291666666666666
+  },
+  "key_metrics": {
+    "mean_reward": 0.7291666666666666
+  }
+}
+```
+
+The remaining low-scoring rows are evaluator judgments about incomplete or
+inefficient tool use, not parser failures. The trajectory evaluator parser was
+hardened for common judge-output variants such as `Score:5`,
+`**Score:** **5**`, and `**Overall Score:** **5 / 5**`.
 
 ## Aggregate Metrics
 

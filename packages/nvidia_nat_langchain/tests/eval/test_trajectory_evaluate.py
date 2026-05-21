@@ -38,6 +38,7 @@ from nat.plugins.eval.data_models.evaluator_io import EvalOutput
 from nat.plugins.eval.evaluator.atif_evaluator import AtifEvalSample
 from nat.plugins.langchain.eval.trajectory_evaluator import TrajectoryEvaluator
 from nat.plugins.langchain.eval.trajectory_evaluator import TrajectoryEvaluatorConfig
+from nat.plugins.langchain.eval.trajectory_evaluator import _LenientTrajectoryOutputParser
 from nat.plugins.langchain.eval.trajectory_evaluator import _atif_to_agent_actions
 from nat.plugins.langchain.eval.trajectory_evaluator import _message_to_text
 from nat.plugins.langchain.eval.trajectory_evaluator import register_trajectory_evaluator
@@ -56,6 +57,24 @@ def fixture_mock_tools():
 @pytest.fixture(name="trajectory_evaluator")
 def fixture_trajectory_evaluator(mock_llm, mock_tools):
     return TrajectoryEvaluator(llm=mock_llm, tools=mock_tools, max_concurrency=4)
+
+
+def test_lenient_trajectory_parser_accepts_score_without_space():
+    parser = _LenientTrajectoryOutputParser()
+
+    result = parser.parse("The trajectory is correct.\nScore:5")
+
+    assert result["score"] == pytest.approx(1.0)
+    assert result["reasoning"] == "The trajectory is correct."
+
+
+def test_lenient_trajectory_parser_accepts_markdown_score():
+    parser = _LenientTrajectoryOutputParser()
+
+    result = parser.parse("The trajectory is correct.\n\n**Overall Score:** **5 / 5**")
+
+    assert result["score"] == pytest.approx(1.0)
+    assert result["reasoning"] == "The trajectory is correct."
 
 
 @pytest.fixture(name="rag_eval_input")
