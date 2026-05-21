@@ -24,25 +24,26 @@ from harbor.models.task.config import MCPServerConfig
 from nat_harbor.agents.installed.profiled_opencode import ProfiledOpenCode
 
 
-def _write_profile(path: Path) -> Path:
+def _write_config(path: Path) -> Path:
     path.write_text(
         """
-name: profiled-tools
-capabilities:
-  - name: code-search
-    kind: mcp_server
-    mcp_server:
-      name: code-search
-      transport: stdio
-      command: python
-      args:
-        - -m
-        - code_search_mcp
-  - name: debug-skills
-    kind: skills_dir
+function_groups:
+  mcp_calculator:
+    _type: mcp_client
+    server:
+      transport: streamable-http
+      url: http://host.docker.internal:9901/mcp
+    include:
+      - calculator__add
+      - calculator__multiply
+      - calculator__compare
+
+agent_harnesses:
+  opencode_with_calculator_mcp:
+    _type: opencode
+    tool_names:
+      - mcp_calculator
     skills_dir: /workspace/skills/debugging
-  - name: opencode-overlay
-    kind: opencode_config
     opencode_config:
       experimental:
         continue_loop_on_deny: true
@@ -50,10 +51,8 @@ capabilities:
         nvidia:
           options:
             baseURL: "{env:NVIDIA_BASE_URL}"
-  - name: profile-env
-    kind: env
     env:
-      NAT_PROFILE_ID: profiled-tools
+      NAT_PROFILE_ID: opencode_with_calculator_mcp
 """,
         encoding="utf-8",
     )
@@ -63,33 +62,46 @@ capabilities:
 def _make_agent(tmp_path: Path, **kwargs) -> ProfiledOpenCode:
     logs_dir = tmp_path / "agent"
     logs_dir.mkdir(parents=True)
-    return ProfiledOpenCode(logs_dir=logs_dir, model_name="nvidia/opus-frontier", **kwargs)
+    return ProfiledOpenCode(logs_dir=logs_dir, model_name="nvidia/explicit-model", **kwargs)
 
 
-def test_profiled_opencode_applies_profile_surfaces(tmp_path: Path) -> None:
-    profile_path = _write_profile(tmp_path / "profile.yml")
+def test_profiled_opencode_applies_nat_config_harness_surfaces(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path / "config.yml")
     existing_mcp = MCPServerConfig(name="existing", transport="sse", url="http://existing.example/sse")
 
     agent = _make_agent(
         tmp_path,
-        capability_profile=profile_path,
+        config_file=config_path,
+        agent_harness="opencode_with_calculator_mcp",
         mcp_servers=[existing_mcp],
         extra_env={"NAT_PROFILE_ID": "explicit-wins", "OTHER": "1"},
     )
 
-    assert [server.name for server in agent.mcp_servers] == ["existing", "code-search"]
+    assert [server.name for server in agent.mcp_servers] == ["existing", "mcp_calculator"]
     assert agent.skills_dir == "/workspace/skills/debugging"
+    assert agent.model_name == "nvidia/explicit-model"
     assert agent._extra_env == {"NAT_PROFILE_ID": "explicit-wins", "OTHER": "1"}
     assert agent._opencode_config["experimental"]["continue_loop_on_deny"] is True
     assert agent._opencode_config["provider"]["nvidia"]["options"]["baseURL"] == "{env:NVIDIA_BASE_URL}"
 
 
+def test_profiled_opencode_keeps_model_as_run_level_argument(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path / "config.yml")
+    logs_dir = tmp_path / "agent"
+    logs_dir.mkdir(parents=True)
+
+    agent = ProfiledOpenCode(logs_dir=logs_dir, config_file=config_path, agent_harness="opencode_with_calculator_mcp")
+
+    assert agent.model_name is None
+
+
 def test_profiled_opencode_preserves_explicit_skills_and_config(tmp_path: Path) -> None:
-    profile_path = _write_profile(tmp_path / "profile.yml")
+    config_path = _write_config(tmp_path / "config.yml")
 
     agent = _make_agent(
         tmp_path,
-        capability_profile=profile_path,
+        config_file=config_path,
+        agent_harness="opencode_with_calculator_mcp",
         skills_dir="/task/skills",
         opencode_config={
             "experimental": {
@@ -103,28 +115,34 @@ def test_profiled_opencode_preserves_explicit_skills_and_config(tmp_path: Path) 
 
 
 def test_profiled_opencode_records_profile_metadata(tmp_path: Path) -> None:
-    profile_path = _write_profile(tmp_path / "profile.yml")
-    agent = _make_agent(tmp_path, capability_profile=profile_path)
+    config_path = _write_config(tmp_path / "config.yml")
+    agent = _make_agent(tmp_path, config_file=config_path, agent_harness="opencode_with_calculator_mcp")
     context = AgentContext()
 
     agent.populate_context_post_run(context)
 
     assert context.metadata is not None
-    profile_metadata = context.metadata["nat_capability_profile"]
-    assert profile_metadata["name"] == "profiled-tools"
-    assert profile_metadata["source_path"] == str(profile_path)
-    assert [capability["name"] for capability in profile_metadata["enabled_capabilities"]] == [
-        "code-search",
-        "debug-skills",
-        "opencode-overlay",
-        "profile-env",
-    ]
+    profile_metadata = context.metadata["nat_agent_harness_profile"]
+    assert profile_metadata["agent_harness"] == "opencode_with_calculator_mcp"
+    assert profile_metadata["source_path"] == str(config_path)
+    assert profile_metadata["tool_names"] == ["mcp_calculator"]
+    assert profile_metadata["mcp_function_groups"] == ["mcp_calculator"]
+    assert profile_metadata["mcp_tool_filters"] == {
+        "mcp_calculator": {
+            "include": [
+                "calculator__add",
+                "calculator__multiply",
+                "calculator__compare",
+            ]
+        }
+    }
 
 
 def test_profiled_opencode_uses_environment_profile_fallback(tmp_path: Path, monkeypatch) -> None:
-    profile_path = _write_profile(tmp_path / "profile.yml")
-    monkeypatch.setenv("NAT_HARBOR_CAPABILITY_PROFILE", str(profile_path))
+    config_path = _write_config(tmp_path / "config.yml")
+    monkeypatch.setenv("NAT_HARBOR_CONFIG_FILE", str(config_path))
+    monkeypatch.setenv("NAT_HARBOR_AGENT_HARNESS", "opencode_with_calculator_mcp")
 
     agent = _make_agent(tmp_path)
 
-    assert [server.name for server in agent.mcp_servers] == ["code-search"]
+    assert [server.name for server in agent.mcp_servers] == ["mcp_calculator"]
